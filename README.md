@@ -1,0 +1,4 @@
+CCN-Simulator
+=============
+
+The simulation system contains two processes. The packet process, which will simulate the complete experience of a packet. The packet process is the complete lifecycle of any packet starting from the node its born to reaching the destination node. The packet process will be able to simulate both interest and data packet experience. It can clone, time out and route itself to destination.   The other process in the system would be the generator process, which wakes up after a particular time and generates a random interest packet. The Generator process will assign a random node as the birth node and an object ID that belongs to another node. Generator process then activates this packet and puts itself to sleep for a random time. 
