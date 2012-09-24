@@ -1,0 +1,317 @@
+'' This is a process-oriented Simscript model of a M/M/1 queue
+
+'' (The code can be copied from the file: /home/courses/cse529/SIMSCRIPT_code/mm1_process.sim )
+
+'' It will stop when the number of customers specified in variable
+'' num.delays has passed through the queue
+
+preamble
+normally, mode is undefined
+
+  	processes include GENERATOR
+    	every PACKET has a PTR and has a NP
+  	define NP,PTR as a integer variable	
+
+  	resources include queue
+  
+  
+  	permanent entities
+  	every ROUTER has a ROUTER.ID and owns a REPOSITORY and a PIT and a FIB
+	and a CACHE
+	define ROUTER.ID as an integer variable
+	
+	temporary entities
+	every REPOSITORY.OBJECT has a OBJ.ID and has a OBJ.SIZE 
+		and belongs to a REPOSITORY
+	every PIT.ENTRY has a OBJ.ID and a OBJ.SEG.ID and a OBJ.SIZE 
+		and a INTERFACE.NUM and a TIMESTAMP and belongs to a PIT
+	every FIB.ENTRY has a OBJ.ID and a OBJ.SIZE and a INTERFACE.NUM 
+		and belongs to a FIB
+	every CACHE.OBJECT has a OBJ.ID and a OBJ.SEG.ID and a OBJ.SIZE
+		and belongs to a CACHE
+	every PACKET.INFO has a PKT.ID and a PKT.SRC.ID and a PKT.OWNER
+	and a PKT.TYPE and a PKT.HOPS and a PKT.PREV.NODE and a PKT.CUR.NODE
+	and a PKT.OBJ.ID
+	
+	define OBJ.ID, OBJ.SIZE, OBJ.SEG.ID, INTERFACE.NUM as integer variables
+	define PKT.ID, PKT.SRC.ID, PKT.OWNER, PKT.HOPS as integer variables
+	define PKT.TYPE,PKT.OBJ.ID as integer variables
+	define PKT.PREV.NODE, PKT.CUR.NODE, PKT.SIZE as integer variables
+	define PKT.IS.ALIVE, PKT.IS.LOCAL as integer variables
+	define PKT.ARRIVAL.TIME, PKT.RESP.TIME as real variables
+	define timestamp as a real variable	
+	define REPOSITORY as a FIFO SET
+	define PIT as a SET ranked by HIGH TIMESTAMP
+	define FIB as a FIFO SET
+	define CACHE as a FIFO SET
+	
+	accumulate  util.server       as the average of n.x.queue
+	accumulate  ave.queue.length  as the average of n.q.queue
+	accumulate  max.queue.length  as the maximum of n.q.queue
+	
+	tally       avg.queue.time   as the average of wait.time
+	
+	define num.done, num.delays, num.nodes, num.packets as integer variables
+	define wait.time as a double variable
+	define adj_matrix as 2-dimensional, integer array
+
+end
+
+''===========================================================================
+
+main
+	WRITE "NUMBER OF NODES IN SIMULATION : " as T *, /
+	define i as integer variable
+	READ num.nodes
+	N.ROUTER = num.nodes
+	call POPULATE.ADJ.MATRIX
+	create every ROUTER
+	call INIT.REPOS
+
+	''now for each router,
+	''create a repository.entry
+	''fill the values
+	''file the repository.entry into repository(router)
+
+	create every queue(N.ROUTER)
+	for i=1 to N.ROUTER by 1
+	do
+		U.queue(i) = 10
+	loop
+	activate a generator in exponential.f(1.0,1) units
+
+	start simulation
+
+end
+
+''===========================================================================
+process generator
+	define NUM.PACKETS as integer variable
+	read NUM.PACKETS
+	num.done = 0
+	while NUM.PACKETS > 0
+	DO
+		''read the web traffic file and construct PACKET.INFO. 
+		create a PACKET.INFO
+		print 1 line thus 
+ENTER PKT.ID
+		read PKT.ID(PACKET.INFO)
+WRITE "PKT.OWNER : " as T *, /
+		read PKT.OWNER(PACKET.INFO)
+WRITE "PKT.OBJ.ID : " as T *, /
+		read PKT.OBJ.ID(PACKET.INFO)
+		PKT.TYPE(PACKET.INFO) = 1
+		PKT.HOPS(PACKET.INFO) = 0
+		PKT.CUR.NODE(PACKET.INFO) = PKT.OWNER(PACKET.INFO)
+        	activate a packet(PACKET.INFO,NUM.PACKETS) now
+		NUM.PACKETS = NUM.PACKETS - 1
+        	wait exponential.f(1.0,1) units
+     	loop
+
+end
+''===========================================================================
+process packet
+
+	define arriv.time as a double variable
+	print 5 lines with PKT.ID(PTR), PKT.CUR.NODE(PTR), PKT.OBJ.ID(PTR) thus
+----PACKET INFO-----
+PKT.ID 		: ****
+PKT.CUR.NODE 	: ****
+PKT.OBJ.ID 	: ****
+--------------------
+  	arriv.time = time.v
+  	request 1 unit of queue(PKT.CUR.NODE)
+	if (PKT.TYPE(PTR) = 1) 
+		
+		''INTEREST PACKET 
+		''SEARCH THE ROUTER'S REPO
+		define OBJ as integer variable
+		call SEARCH.REPOSITORY giving PTR yielding OBJ
+		if ( OBJ = 0 )
+			''SEARCH CACHE
+			call SEARCH.CACHE giving PTR yielding OBJ
+			if(OBJ = 0)
+				''CHECK FIB
+				call SEARCH.FIB giving PTR yielding OBJ
+				if(OBJ = 0)	
+					''BROADCAST PACKET
+				else 
+					call OBJECT_FOUND_FIB giving OBJ
+				always 
+			else 
+				call OBJECT_FOUND giving OBJ
+			always 
+		else 
+			call OBJECT_FOUND giving OBJ
+		always 
+
+	else 
+		''DATA PACKET
+	always
+  	wait.time = time.v - arriv.time
+        work exponential.f(0.5,2) units
+        relinquish 1 unit of queue(PKT.CUR.NODE)
+  	if (NP<=1)
+            	call report
+     	always
+
+end
+
+''===========================================================================
+
+routine OBJECT_FOUND giving OBJ 
+	define OBJ as integer variable
+	print 1 line with OBJ.ID(OBJ) thus
+OBJECT FOUND  *****
+end
+
+routine  OBJECT_FOUND_FIB giving OBJ
+	define OBJ as integer variable
+	print 1 line thus
+OBJECT FOUND in FIB
+end
+
+routine SEARCH.FIB giving PKT yielding OBJ 
+	define  PKT, OBJ, OBJECT.FOUND, ROUTER as integer variable
+	OBJECT.FOUND = 0
+	ROUTER = PKT.CUR.NODE(PKT)
+	OBJ = 0
+	for each FIB.ENTRY in FIB(ROUTER)
+	do
+		if ( PKT.OBJ.ID(PTR) = OBJ.ID(FIB.ENTRY) )
+			OBJECT.FOUND = 1
+			OBJ = FIB.ENTRY
+		always
+	loop
+	return
+end
+
+routine SEARCH.CACHE giving PKT yielding OBJ 
+	define  PKT, OBJ, OBJECT.FOUND, ROUTER as integer variable
+	OBJECT.FOUND = 0
+	ROUTER = PKT.CUR.NODE(PKT)
+	OBJ = 0
+	for each CACHE.OBJECT in CACHE(ROUTER)
+	do
+		if ( PKT.OBJ.ID(PTR) = OBJ.ID(CACHE.OBJECT) )
+			OBJECT.FOUND = 1
+			OBJ = CACHE.OBJECT
+		always
+	loop
+	return
+end
+
+routine SEARCH.REPOSITORY giving PKT yielding OBJ 
+	define  PKT, OBJ, OBJECT.FOUND, ROUTER as integer variable
+	OBJECT.FOUND = 0
+	ROUTER = PKT.CUR.NODE(PKT)
+	OBJ = 0
+	for each REPOSITORY.OBJECT in REPOSITORY(ROUTER)
+	do
+		if ( PKT.OBJ.ID(PTR) = OBJ.ID(REPOSITORY.OBJECT) )
+			OBJECT.FOUND = 1
+			OBJ = REPOSITORY.OBJECT
+		always
+	loop
+	return
+end
+
+
+routine report
+	
+	print 6 lines with time.v, util.server, ave.queue.length,
+	max.queue.length and avg.queue.time thus
+	
+	clock time = *******.** minutes
+	the utilization of the server was     **.****
+	the average length of the queue was  ***.**
+	the maximum length of the queue was ****
+	the average time in the system was  ****.**   minutes
+	
+	print 3 lines thus
+	
+	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	
+	'' The following line is just to stall Windows NT Simscript so that results can
+	'' be examined. Uncomment the line when using the Windows version of Simscript.
+	'' read num.delays
+
+	stop
+
+end
+
+''============================================================================
+
+routine INIT.REPOS
+
+	define i,COUNT as integer variable
+	for each ROUTER
+	do
+		print 1 line with ROUTER thus
+How many objects in ROUTER - **  
+		READ COUNT
+		for i = 1 to COUNT
+		do
+			create a REPOSITORY.OBJECT
+WRITE "OBJ.ID : " as T *, /
+			READ OBJ.ID(REPOSITORY.OBJECT)
+WRITE "OBJ.SIZE : " as T *, /
+			READ OBJ.SIZE(REPOSITORY.OBJECT)
+			FILE REPOSITORY.OBJECT IN REPOSITORY(ROUTER)
+		loop
+	loop
+
+call PRINT.REPOS
+	
+end
+''============================================================================
+routine PRINT.REPOS
+	for each ROUTER
+	do
+		print 1 line with ROUTER thus 
+**
+		for each REPOSITORY.OBJECT in REPOSITORY(ROUTER)
+		do
+			print 1 line with OBJ.ID(REPOSITORY.OBJECT) 
+			and OBJ.SIZE(REPOSITORY.OBJECT) thus
+	**  **
+		loop
+	loop
+end
+''============================================================================
+
+ROUTINE POPULATE.ADJ.MATRIX
+
+	define col and i and j and con as integer variables
+	reserve adj_matrix as num.nodes by num.nodes
+	for i = 1 to num.nodes
+	do
+		for j=i+1 to num.nodes
+		do
+			col = j
+			print 1 line with i and col thus
+	Is node ** connected to node ** :
+			READ con
+			adj_matrix(i,col) = con
+			adj_matrix(col,i) = con
+		loop
+	loop
+	
+	call PRINT.ADJ.MATRIX
+	
+END
+
+''===========================================================================
+ROUTINE PRINT.ADJ.MATRIX 
+	define col and i and j as integer variables
+	for i = 1 to num.nodes
+	do
+		for j=1 to num.nodes
+		do
+			col = j
+			print 1 line with i and col and adj_matrix(i,col) thus
+** ** : **
+		loop
+	loop
+END
+''===========================================================================
