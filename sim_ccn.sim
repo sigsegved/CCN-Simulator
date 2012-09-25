@@ -24,16 +24,17 @@ normally, mode is undefined
 	every REPOSITORY.OBJECT has a OBJ.ID and has a OBJ.SIZE 
 		and belongs to a REPOSITORY
 	every PIT.ENTRY has a OBJ.ID and a OBJ.SEG.ID and a OBJ.SIZE 
-		and a INTERFACE.NUM and a TIMESTAMP and belongs to a PIT
-	every FIB.ENTRY has a OBJ.ID and a OBJ.SIZE and a INTERFACE.NUM 
-		and belongs to a FIB
+		and a INTERFACE and a TIMESTAMP and belongs to a PIT
+	every FIB.ENTRY has a OBJ.ID and a OBJ.SIZE and a INTERFACE 
+		and a HOP.COUNT and belongs to a FIB
 	every CACHE.OBJECT has a OBJ.ID and a OBJ.SEG.ID and a OBJ.SIZE
 		and belongs to a CACHE
 	every PACKET.INFO has a PKT.ID and a PKT.SRC.ID and a PKT.OWNER
 	and a PKT.TYPE and a PKT.HOPS and a PKT.PREV.NODE and a PKT.CUR.NODE
 	and a PKT.OBJ.ID
 	
-	define OBJ.ID, OBJ.SIZE, OBJ.SEG.ID, INTERFACE.NUM as integer variables
+	define OBJ.ID, OBJ.SIZE, OBJ.SEG.ID, INTERFACE, HOP.COUNT
+		 as integer variables
 	define PKT.ID, PKT.SRC.ID, PKT.OWNER, PKT.HOPS as integer variables
 	define PKT.TYPE,PKT.OBJ.ID as integer variables
 	define PKT.PREV.NODE, PKT.CUR.NODE, PKT.SIZE as integer variables
@@ -135,19 +136,24 @@ PKT.OBJ.ID 	: ****
 				call SEARCH.FIB giving PTR yielding OBJ
 				if(OBJ = 0)	
 					''BROADCAST PACKET
+					''PIT LOGIC
+
 				else 
-					call OBJECT_FOUND_FIB giving OBJ
+					call OBJECT_FOUND_FIB giving OBJ and PTR
 				always 
 			else 
-				call OBJECT_FOUND giving OBJ
+				call OBJECT_FOUND giving OBJ and PTR
 			always 
 		else 
-			call OBJECT_FOUND giving OBJ
+			call OBJECT_FOUND giving OBJ and PTR
 		always 
 
 	else 
 		''DATA PACKET
+		print 1 line with PKT.ID(PTR) thus 
+Data packet received for PKT.ID ****
 	always
+
   	wait.time = time.v - arriv.time
         work exponential.f(0.5,2) units
         relinquish 1 unit of queue(PKT.CUR.NODE)
@@ -159,14 +165,76 @@ end
 
 ''===========================================================================
 
-routine OBJECT_FOUND giving OBJ 
-	define OBJ as integer variable
-	print 1 line with OBJ.ID(OBJ) thus
-OBJECT FOUND  *****
+routine ADD.CACHE giving PKT
+	define PKT as integer variable
+	ROUTER = PKT.CUR.NODE(PKT)
+	create a CACHE.OBJECT
+	OBJ.ID(CACHE.OBJECT) = OBJ.ID(PKT)
+	OBJ.SIZE(CACHE.OBJECT) = OBJ.SIZE(PKT)
+	FILE CACHE.OBJECT in CACHE(ROUTER)
+	return
 end
 
-routine  OBJECT_FOUND_FIB giving OBJ
-	define OBJ as integer variable
+
+routine ADD.FIB giving PKT
+	define PKT as integer variable
+	ROUTER = PKT.CUR.NODE(PKT)
+	create a FIB.ENTRY
+	OBJ.ID(FIB.ENTRY) = OBJ.ID(PKT)
+	OBJ.SIZE(FIB.ENTRY) = OBJ.SIZE(PKT)
+	INTERFACE(FIB.ENTRY) = PKT.PREV.NODE(PKT)
+	TIMESTAMP(FIB.ENTRY) = time.v
+	HOP.COUNT(FIB.ENTRY) = PKT.HOPS(PKT)
+	FILE FIB.ENTRY in FIB(ROUTER)
+	return
+end
+
+
+routine ADD.PIT giving PKT 
+	define PKT as integer variable
+	ROUTER = PKT.CUR.NODE(PKT)
+	create a PIT.ENTRY
+	OBJ.ID(PIT.ENTRY) = OBJ.ID(PKT)
+	OBJ.SIZE(PIT.ENTRY) = OBJ.SIZE(PKT)
+	INTERFACE(PIT.ENTRY) = PKT.PREV.NODE(PKT)
+	TIMESTAMP(PIT.ENTRY) = time.v
+	FILE PIT.ENTRY in PIT(ROUTER)
+
+end
+
+
+routine SEARCH.PIT giving PKT yielding PIT_ENT
+	define PKT, PIT_ENT as integer variable
+	define ROUTER, OBJECT.FOUND as integer variable
+	OBJECT.FOUND = 0
+	ROUTER = PKT.CUR.NODE(PKT)
+	for each PIT.ENTRY in PIT(ROUTER)
+	do
+		if ( PKT.OBJ.ID(PTR) = OBJ.ID(PIT.ENTRY) )
+			OBJECT.FOUND = 1
+			PIT_ENT = PIT.ENTRY
+		always
+	loop
+	return
+end
+
+routine OBJECT_FOUND giving OBJ and PKT
+
+	define PKT, OBJ as integer variable
+	create a PACKET.INFO
+	PKT.ID(PACKET.INFO) = PKT.OBJ.ID(PKT)
+	PKT.OWNER(PACKET.INFO) = PKT.CUR.NODE(PKT)
+	PKT.OBJ.ID(PACKET.INFO) = PKT.OBJ.ID(PKT)
+	PKT.TYPE(PACKET.INFO) = 2
+	PKT.HOPS(PACKET.INFO) = 0
+	PKT.CUR.NODE(PACKET.INFO) = PKT.OWNER(PACKET.INFO)
+	print 1 line with OBJ.ID(OBJ) thus
+OBJECT FOUND  *****
+        activate a packet(PACKET.INFO) now
+end
+
+routine  OBJECT_FOUND_FIB giving OBJ and PKT
+	define PKT, OBJ as integer variable
 	print 1 line thus
 OBJECT FOUND in FIB
 end
@@ -307,7 +375,7 @@ ROUTINE PRINT.ADJ.MATRIX
 	for i = 1 to num.nodes
 	do
 		for j=1 to num.nodes
-		do
+		Do
 			col = j
 			print 1 line with i and col and adj_matrix(i,col) thus
 ** ** : **
