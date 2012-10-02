@@ -1,5 +1,5 @@
 ccn_simulator: sim_ccn.sim
-	simc -o $@ $^
+	simc -d -g -o $@ $^
 
 clean:
 	rm -f a.out ccn_simulator 
