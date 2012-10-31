@@ -8,16 +8,17 @@
 preamble
 normally, mode is undefined
 
-    processes include GENERATOR
-      every PACKET has a PTR and has a NP
-    define NP,PTR as a integer variable  
+    processes include GENERATOR, resend_packets
+      every PACKET has a PTR and a CTR
+		break packet ties by low CTR
+    define CTR,PTR as a integer variable  
 
     resources include queue
   
   
-    permanent entities
-    every ROUTER has a ROUTER.ID and owns a REPOSITORY and a PIT and a FIB
-  and a CACHE
+  permanent entities
+  every ROUTER has a ROUTER.ID and owns a REPOSITORY and a PIT and a FIB
+  and a CACHE and a PKTLIST
   define ROUTER.ID as an integer variable
   
   temporary entities
@@ -31,20 +32,22 @@ normally, mode is undefined
     and belongs to a CACHE
   every PACKET.INFO has a PKT.ID and a PKT.SRC.ID and a PKT.OWNER
   and a PKT.TYPE and a PKT.HOPS and a PKT.PREV.NODE and a PKT.CUR.NODE
-  and a PKT.OBJ.ID
+  and a PKT.OBJ.ID  and a PKT.OBJ.SIZE and a TIMESTAMP 
+	and a PKT.STATUS belongs to a PKTLIST
   
   define OBJ.ID, OBJ.SIZE, OBJ.SEG.ID, INTERFACE, HOP.COUNT
      as integer variables
   define PKT.ID, PKT.SRC.ID, PKT.OWNER, PKT.HOPS as integer variables
-  define PKT.TYPE,PKT.OBJ.ID as integer variables
+  define PKT.OBJ.SIZE, PKT.TYPE,PKT.OBJ.ID,PKT.STATUS  as integer variables
   define PKT.PREV.NODE, PKT.CUR.NODE, PKT.SIZE as integer variables
   define PKT.IS.ALIVE, PKT.IS.LOCAL as integer variables
   define PKT.ARRIVAL.TIME, PKT.RESP.TIME as real variables
-  define timestamp as a real variable  
+  define TIMESTAMP as a real variable  
   define REPOSITORY as a FIFO SET
   define PIT as a SET ranked by HIGH TIMESTAMP
   define FIB as a FIFO SET
   define CACHE as a FIFO SET
+  define PKTLIST as a FIFO SET ranked by HIGH TIMESTAMP
   
   accumulate  util.server       as the average of n.x.queue
   accumulate  ave.queue.length  as the average of n.q.queue
@@ -52,9 +55,10 @@ normally, mode is undefined
   
   tally       avg.queue.time   as the average of wait.time
   
-  define num.done, num.delays, num.nodes, num.packets as integer variables
+  define num.done, num.delays, num.nodes  as integer variables
   define wait.time as a double variable
   define adj_matrix as 2-dimensional, integer array
+  define NUM.PACKETS as integer variable
 
 end
 
@@ -75,25 +79,60 @@ main
   ''file the repository.entry into repository(router)
 
   create every queue(N.ROUTER)
+  ''create every queue(1)
+	''U.queue = 1
   for i=1 to N.ROUTER by 1
   do
-    U.queue(i) = 10
+    U.queue(i) = 2
   loop
   activate a generator in exponential.f(1.0,1) units
+  activate a resend_packets in exponential.f(1.0,1) units
 
   start simulation
 
 end
+''===========================================================================
+
+process resend_packets
+	define IPKT.COUNT,i,x,R.TIME.OUT as integer variable
+	let R.TIME.OUT = 5.0
+	for x=0 to 1 by 0
+	do
+		print 1 line with time.v thus 
+resend_process awake at *****.**** seconds
+		IPKT.COUNT  = 0
+		for i=1 to N.ROUTER by 1
+		do 
+			IPKT.COUNT = IPKT.COUNT + N.PKTLIST(i)
+			for each PACKET.INFO in PKTLIST(i) 
+			do 
+				''if time expired
+				if time.v - TIMESTAMP(PACKET.INFO) > R.TIME.OUT
+					call ACTIVATE.PKT giving 
+      		PKT.ID(PACKET.INFO), PKT.OWNER(PACKET.INFO), 
+					PKT.OBJ.ID(PACKET.INFO), 1, 0,i,0 
+				always
+			loop
+		loop
+		if IPKT.COUNT EQ 0 AND NUM.PACKETS EQ 0 
+			stop
+		always
+    wait exponential.f(2.0,1) units
+	loop
+end
 
 ''===========================================================================
 process generator
-  define NUM.PACKETS as integer variable
+  define GLOBAL.PACKET.ID as integer variable
   read NUM.PACKETS
   num.done = 0
+  GLOBAL.PACKET.ID = 1451
   define PKT.NAME as integer variable
   while NUM.PACKETS > 0
   DO
     ''read the web traffic file and construct PACKET.INFO. 
+	print 1 line with time.v*24*3600 thus 
+TIME IN SEC = *******.******
     create a PACKET.INFO
     print 1 line thus 
 ENTER PKT.ID
@@ -105,19 +144,31 @@ WRITE "PKT.OBJ.ID : " as T *, /
     PKT.TYPE(PACKET.INFO) = 1
     PKT.HOPS(PACKET.INFO) = 0
     PKT.CUR.NODE(PACKET.INFO) = PKT.OWNER(PACKET.INFO)
-    PKT.NAME = RANDOM.F(1)
-          activate a packet called PKT.NAME now
-	  let PTR(PKT.NAME) = PACKET.INFO
+    PKT.NAME = RANDOM.F(1)*100000
+    activate a packet called PKT.NAME now
+	CTR..(PKT.NAME) = GLOBAL.PACKET.ID
+	let PTR(PKT.NAME) = PACKET.INFO
+	let PKT.ID(PTR(PKT.NAME)) = GLOBAL.PACKET.ID
     NUM.PACKETS = NUM.PACKETS - 1
-          wait exponential.f(1.0,1) units
-       loop
-
+	GLOBAL.PACKET.ID = GLOBAL.PACKET.ID + 1
+  	FILE PACKET.INFO in PKTLIST(PKT.OWNER(PACKET.INFO))
+    wait exponential.f(2.0,1) units
+  loop
 end
 ''===========================================================================
 process packet
-
   define arriv.time as a double variable
   define j,PIT_ENT as integer variable
+
+	if(PTR EQ 0 )
+		print 1 line thus
+DESTROYING NULL PACKET
+		''go to end_label
+		print 1 line thus
+DESTROYED NULL PACKET
+	always
+
+
   print 8 lines with PKT.ID(PTR), PKT.OWNER(PTR), PKT.CUR.NODE(PTR), 
   PKT.PREV.NODE(PTR), PKT.OBJ.ID(PTR) , PKT.TYPE(PTR) thus
 ----PACKET INFO-------
@@ -130,9 +181,9 @@ PKT.TYPE       : ****
 ----------------------
   ROUTER = PKT.CUR.NODE(PTR)
   arriv.time = time.v
-  print 1 line thus 
-REQUESTING 1 UNIT OF QUEUE
-  request 1 unit of queue(PKT.CUR.NODE)
+  print 1 line with  ROUTER thus 
+REQUESTING 1 UNIT OF QUEUE(**)
+  request 1 unit of queue(ROUTER)
   if (PKT.TYPE(PTR) = 1) 
   ''{
     ''INTEREST PACKET 
@@ -149,7 +200,11 @@ REQUESTING 1 UNIT OF QUEUE
         call SEARCH.FIB giving PTR yielding OBJ
         if(OBJ = 0)  
         ''{
-          call SEARCH.PIT giving PTR yielding PIT_ENT
+					if(PKT.CUR.NODE(PTR) NE PKT.OWNER(PTR)) 
+          	call SEARCH.PIT giving PTR yielding PIT_ENT
+					else 
+						PIT_ENT = 0
+					always
           if(PIT_ENT = 0)
           ''{
             ''BROADCAST PACKET
@@ -175,6 +230,8 @@ FORWARDING PACKET *** FROM *** TO ***
           ''}
           else 
             ''PIT FOUND , SUPRESS IT & UPDATE PIT.
+	    			print 1 line thus 
+PIT FOUND, SUPRESS THE PACKET
             call ADD.PIT giving PTR 
           always
         ''}
@@ -203,34 +260,50 @@ FORWARDING PACKET *** FROM *** TO ***
     if(PKT.OWNER(PTR) = PKT.CUR.NODE(PTR))
 	    print 1 line thus 
 RECEIVED THE REQUESTED OBJECT
-   always
-    if(PIT_ENT = 0)
-    ''{
-      ''SUPRESS PACKET.
-      ''print trace3
-      print 1 line thus 
-DATA PACKET RECVD
-    ''}
-    else 
-    ''{
-      ''FOR ALL PIT.ENT forward/activate a new packet
-      ''PURGE the PIT
-      ''ADD A FIB ENTRY
-      ''ADD OBJ TO CACHE
-      call FWD.DATA.PKT giving PTR
-      call ADD.FIB giving PTR
-      call ADD.CACHE giving PTR
-      
-    ''}
+			''REMOVE PACKET.INFO FROM PKTLIST(PKT.CUR.NODE)  -- TODO
+			call DELETE.PKTLIST giving PTR
+		else 
+    	if(PIT_ENT = 0)
+    	''{
+      	''SUPRESS PACKET.
+      	''print trace3
+      	print 1 line with ROUTER thus 
+SUPRESSING DATA PACKET - NO PIT ENTRY at **** 
+    	''}
+    	else 
+    	''{
+      	''FOR ALL PIT.ENT forward/activate a new packet
+      	''PURGE the PIT
+      	''ADD A FIB ENTRY
+      	''ADD OBJ TO CACHE
+      	call FWD.DATA.PKT giving PTR
+      	call ADD.FIB giving PTR
+      	call ADD.CACHE giving PTR
+      	
+    	''}
+   		always
     always
   always
 
    wait.time = time.v - arriv.time
-   ''work exponential.f(0.5,2) units
-   print 1 line  with PKT.CUR.NODE thus
-RELINQUISH 1 UNIT OF QUEUE FOR ****
-   ''relinquish 1 unit of queue(PKT.CUR.NODE)
+   print 1 line  with PKT.CUR.NODE(PTR) thus
+RELINQUISHED 1 UNIT OF QUEUE FOR ****
+   relinquish 1 unit of queue(PKT.CUR.NODE(PTR))
+   work exponential.f(0.5,2) units
+	'end_label'
 
+end
+''===========================================================================
+
+routine DELETE.PKTLIST giving PKT
+define PKT as integer variable
+	for each PACKET.INFO in PKTLIST(PKT.CUR.NODE(PKT)) 
+	do
+		if PKT.ID(PACKET.INFO) EQ PKT.ID(PKT) 
+			REMOVE PACKET.INFO from PKTLIST(PKT.CUR.NODE(PKT))
+		always
+	loop
+	
 end
 
 ''===========================================================================
@@ -239,13 +312,14 @@ routine ADD.CACHE giving PKT
   define PKT as integer variable
   ROUTER = PKT.CUR.NODE(PKT)
   create a CACHE.OBJECT
-  OBJ.ID(CACHE.OBJECT) = OBJ.ID(PKT)
-  OBJ.SIZE(CACHE.OBJECT) = OBJ.SIZE(PKT)
+  OBJ.ID(CACHE.OBJECT) = PKT.OBJ.ID(PKT)
+  OBJ.SIZE(CACHE.OBJECT) = PKT.OBJ.SIZE(PKT)
   FILE CACHE.OBJECT in CACHE(ROUTER)
   return
 end
 
 
+''============================================================================
 routine ADD.FIB giving PKT
   define PKT as integer variable
   define FIB.ENT as integer variable
@@ -258,8 +332,8 @@ routine ADD.FIB giving PKT
 
   ROUTER = PKT.CUR.NODE(PKT)
   create a FIB.ENTRY
-  OBJ.ID(FIB.ENTRY) = OBJ.ID(PKT)
-  OBJ.SIZE(FIB.ENTRY) = OBJ.SIZE(PKT)
+  OBJ.ID(FIB.ENTRY) = PKT.OBJ.ID(PKT)
+  OBJ.SIZE(FIB.ENTRY) = PKT.OBJ.SIZE(PKT)
   INTERFACE(FIB.ENTRY) = PKT.PREV.NODE(PKT)
   TIMESTAMP(FIB.ENTRY) = time.v
   HOP.COUNT(FIB.ENTRY) = PKT.HOPS(PKT)
@@ -268,35 +342,62 @@ routine ADD.FIB giving PKT
   return
 end
 
+''============================================================================
 
 routine ADD.PIT giving PKT 
   define PKT as integer variable
+	define PIT_ENT as integer variable
   ROUTER = PKT.CUR.NODE(PKT)
-  create a PIT.ENTRY
-  OBJ.ID(PIT.ENTRY) = OBJ.ID(PKT)
-  OBJ.SIZE(PIT.ENTRY) = OBJ.SIZE(PKT)
-  INTERFACE(PIT.ENTRY) = PKT.PREV.NODE(PKT)
-  TIMESTAMP(PIT.ENTRY) = time.v
-  FILE PIT.ENTRY in PIT(ROUTER)
+  call SEARCH.PIT giving PKT yielding PIT_ENT
+	if PIT_ENT EQ 0 OR INTERFACE(PIT_ENT) NE PKT.PREV.NODE(PKT)
+  	create a PIT.ENTRY
+  	OBJ.ID(PIT.ENTRY) = PKT.OBJ.ID(PKT)
+  	OBJ.SIZE(PIT.ENTRY) = PKT.OBJ.SIZE(PKT)
+  	INTERFACE(PIT.ENTRY) = PKT.PREV.NODE(PKT)
+  	TIMESTAMP(PIT.ENTRY) = time.v
+  	FILE PIT.ENTRY in PIT(ROUTER)
+		print 1 line with ROUTER, PKT.PREV.NODE(PTR), 
+		OBJ.ID(PIT.ENTRY)  thus
+PIT ENTRY FROM **** to **** FOR OBJ ***
+	always 
 
 end
 
+''============================================================================
+routine PURGE.PIT giving ROUTER_ID
+define PIT.THRESHOLD, ROUTER_ID as integer variable
+let PIT.THRESHOLD = 2.0
 
+for each PIT.ENTRY in PIT(ROUTER_ID)
+do
+	if(time.v - TIMESTAMP(PIT.ENTRY) > PIT.THRESHOLD) 
+		REMOVE the PIT.ENTRY from PIT(ROUTER_ID)
+print 1 line with MINUTE.F(time.v), TIMESTAMP(PIT.ENTRY) thus 
+TIME.V = ********.*****  TIMESTAMP = *******.*****
+	always
+loop
+
+end
+
+''============================================================================
 routine SEARCH.PIT giving PKT yielding PIT_ENT
+
   define PKT, PIT_ENT as integer variable
   define ROUTER, OBJECT.FOUND as integer variable
   PIT_ENT = 0
   OBJECT.FOUND = 0
   ROUTER = PKT.CUR.NODE(PKT)
+  call PURGE.PIT giving ROUTER
   for each PIT.ENTRY in PIT(ROUTER)
   do
-    if ( PKT.OBJ.ID(PTR) = OBJ.ID(PIT.ENTRY) )
+    if ( PKT.OBJ.ID(PTR) = OBJ.ID(PIT.ENTRY))
       OBJECT.FOUND = 1
       PIT_ENT = PIT.ENTRY
     always
   loop
   return
 end
+''============================================================================
 routine FWD.DATA.PKT giving PKT 
   define PKT as integer variable
   define ROUTER, OBJECT.FOUND as integer variable
@@ -318,6 +419,7 @@ FORWARDING DATA PACKET FROM *** to  ***
   return
 end
 
+''============================================================================
 
 routine ACTIVATE.PKT giving PKTID, PKTOWN, PKTOBJID, PKTTYPE,
 				PKTHOPS, PKTCURNODE, PKTPREVNODE
@@ -332,17 +434,21 @@ routine ACTIVATE.PKT giving PKTID, PKTOWN, PKTOBJID, PKTTYPE,
   PKT.HOPS(PACKET.INFO) = PKTHOPS
   PKT.CUR.NODE(PACKET.INFO) = PKTCURNODE
   PKT.PREV.NODE(PACKET.INFO) = PKTPREVNODE
-  PKT.NAME = RANDOM.F(1)
+  PKT.NAME = RANDOM.F(1)*100000
+  ''work exponential.f(0.5,2) units
         activate a packet called PKT.NAME now
+	CTR..(PKT.NAME) = PKTID
 	let PTR(PKT.NAME) = PACKET.INFO
 end
 
+''============================================================================
 routine  OBJECT_FOUND_FIB giving OBJ and PKT
   define PKT, OBJ as integer variable
   print 1 line thus
 OBJECT FOUND in FIB
 end
 
+''============================================================================
 routine SEARCH.FIB giving PKT yielding OBJ 
   define  PKT, OBJ, OBJECT.FOUND, ROUTER as integer variable
   OBJECT.FOUND = 0
@@ -358,6 +464,7 @@ routine SEARCH.FIB giving PKT yielding OBJ
   return
 end
 
+''============================================================================
 routine SEARCH.CACHE giving PKT yielding OBJ 
   define  PKT, OBJ, OBJECT.FOUND, ROUTER as integer variable
   OBJECT.FOUND = 0
@@ -373,6 +480,7 @@ routine SEARCH.CACHE giving PKT yielding OBJ
   return
 end
 
+''============================================================================
 routine SEARCH.REPOSITORY giving PKT yielding OBJ 
   define  PKT, OBJ, OBJECT.FOUND, ROUTER as integer variable
   OBJECT.FOUND = 0
@@ -389,6 +497,7 @@ routine SEARCH.REPOSITORY giving PKT yielding OBJ
 end
 
 
+''============================================================================
 routine report
   
   print 6 lines with time.v, util.server, ave.queue.length,
